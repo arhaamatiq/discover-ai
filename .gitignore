@@ -24,3 +24,13 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# frontend
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# backend
+backend/.venv/
+backend/venv/
+
