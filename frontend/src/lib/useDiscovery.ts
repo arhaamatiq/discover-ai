@@ -28,7 +28,7 @@ function serializableNodes(nodes: Node[]): Node[] {
 /*  Height estimation for layout (heuristic, good enough for v1)      */
 /* ------------------------------------------------------------------ */
 
-const CARD_WIDTH = 385;
+const CARD_WIDTH = 578; /* 50% wider than original 385 */
 const PROMPT_WIDTH = 582;
 const COMPANY_WIDTH = 582;
 const COMPANY_HEIGHT = 112;
@@ -50,8 +50,10 @@ function estimateNodeHeight(node: Node): number {
     const title: string = (node.data as Record<string, unknown>).title as string ?? "";
     const desc: string = (node.data as Record<string, unknown>).description as string ?? "";
     const titleLines = title ? Math.max(1, Math.ceil(title.length / 30)) : 0;
-    const descLines = Math.max(1, Math.ceil(desc.length / 50));
-    return (titleLines + descLines) * 20 + 48 + (title ? 12 : 0); // padding + gap
+    const descLinesByBreaks = (desc.match(/\n/g) || []).length + 1;
+    const descLinesByLength = Math.ceil(desc.length / 72); /* ~72 chars per line at 578px width */
+    const descLines = Math.max(1, descLinesByBreaks, descLinesByLength);
+    return (titleLines + descLines) * 22 + 48 + (title ? 12 : 0); // 22px per line for 15px text + spacing
   }
 
   return 100;
@@ -140,7 +142,7 @@ function layoutNodes(nodes: Node[], edges: Edge[]): Node[] {
 
     topLevelNodes.forEach((node, i) => {
       const colW = columnWidths[i];
-      // Center the 385px card within its column
+      // Center the card within its column
       const x = curX + (colW - CARD_WIDTH) / 2;
       const y = COMPANY_HEIGHT + FIRST_ROW_GAP;
       positioned.set(node.id, { x, y });
@@ -254,13 +256,43 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
   const rawNodesRef = useRef<Node[]>([]);
   const rawEdgesRef = useRef<Edge[]>([]);
   const companyNodeIdRef = useRef<string>("");
+  const loadingNodeIdRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ---- helper: re-layout and flush to state ---- */
+  /* ---- helper: re-layout, inject isLoading, and flush to state ---- */
   function applyLayout() {
-    setNodes(layoutNodes(rawNodesRef.current, rawEdgesRef.current));
+    const laidOut = layoutNodes(rawNodesRef.current, rawEdgesRef.current);
+    const withLoading = laidOut.map((n) => ({
+      ...n,
+      data: {
+        ...(n.data as Record<string, unknown>),
+        isLoading: n.id === loadingNodeIdRef.current,
+      },
+    }));
+    setNodes(withLoading);
     setEdges([...rawEdgesRef.current]);
   }
+
+  /* ---- Re-hydrate idea cards when auth state changes (e.g. user logs in) ---- *
+   * Nodes capture onAuthRequired at creation time. When the user signs in,
+   * onAuthRequired becomes undefined, but existing nodes still hold the old
+   * function — causing the auth modal to re-open on every click (the loop).
+   * This effect re-stamps the current ref value onto all live idea-card nodes. */
+  useEffect(() => {
+    if (rawNodesRef.current.length === 0) return;
+    rawNodesRef.current = rawNodesRef.current.map((n) => {
+      if (n.type !== "idea-card") return n;
+      return {
+        ...n,
+        data: {
+          ...(n.data as Record<string, unknown>),
+          onAuthRequired: onAuthRequiredRef.current,
+        },
+      };
+    });
+    applyLayout();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onAuthRequired]);
 
   /* ---- Start discovery (SSE stream) ---- */
   const startDiscovery = useCallback(async () => {
@@ -325,6 +357,10 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         `Error: ${err instanceof Error ? err.message : "Unknown error"}`
       );
     } finally {
+      if (loadingNodeIdRef.current) {
+        loadingNodeIdRef.current = "";
+        applyLayout();
+      }
       setIsRunning(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -337,9 +373,10 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         const nodeType = data.type as string;
         const nodeId = data.id as string;
 
-        // Track company node ID for parentId on idea cards
+        // Track company node ID for parentId on idea cards; mark it as loading
         if (nodeType === "company-header") {
           companyNodeIdRef.current = nodeId;
+          loadingNodeIdRef.current = nodeId;
         }
 
         const newNode: Node = {
@@ -362,7 +399,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
           },
         };
         rawNodesRef.current = [...rawNodesRef.current, newNode];
-        setNodes(layoutNodes(rawNodesRef.current, rawEdgesRef.current));
+        applyLayout();
         break;
       }
       case "edge": {
@@ -387,6 +424,8 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
       }
       case "done": {
         setStatus("Discovery complete");
+        loadingNodeIdRef.current = "";
+        applyLayout();
         break;
       }
     }
@@ -414,6 +453,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
 
     rawNodesRef.current = [...rawNodesRef.current, promptNode];
     rawEdgesRef.current = [...rawEdgesRef.current, promptEdge];
+    loadingNodeIdRef.current = promptNodeId;
     applyLayout();
 
     // 3. Call backend
@@ -458,6 +498,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         style: { stroke: "#404040", strokeWidth: 2 },
       };
 
+      loadingNodeIdRef.current = "";
       rawNodesRef.current = [...rawNodesRef.current, responseNode];
       rawEdgesRef.current = [...rawEdgesRef.current, responseEdge];
       applyLayout();
@@ -465,6 +506,10 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : "Chat failed"}`);
     } finally {
+      if (loadingNodeIdRef.current) {
+        loadingNodeIdRef.current = "";
+        applyLayout();
+      }
       setIsRunning(false);
     }
   }
@@ -500,6 +545,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
 
     rawNodesRef.current = [...rawNodesRef.current, promptNode];
     rawEdgesRef.current = [...rawEdgesRef.current, promptEdge];
+    loadingNodeIdRef.current = promptNodeId;
     applyLayout();
 
     // 4. Call backend
@@ -550,6 +596,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         rawEdgesRef.current = [...rawEdgesRef.current, variationEdge];
       }
 
+      loadingNodeIdRef.current = "";
       applyLayout();
       setStatus("");
     } catch (err) {
@@ -557,6 +604,10 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         `Error: ${err instanceof Error ? err.message : "Variations failed"}`
       );
     } finally {
+      if (loadingNodeIdRef.current) {
+        loadingNodeIdRef.current = "";
+        applyLayout();
+      }
       setIsRunning(false);
     }
   }

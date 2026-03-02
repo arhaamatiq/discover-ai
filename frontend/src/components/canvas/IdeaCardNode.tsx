@@ -1,18 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { ArrowRight, Star, MessageSquare } from "lucide-react";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 export type IdeaCardNodeData = {
   title: string;
   description: string;
   parentId?: string;
+  isLoading?: boolean;
   onSubmitPrompt?: (nodeId: string, prompt: string) => void;
   onCreateVariations?: (nodeId: string) => void;
   onAuthRequired?: () => void;
 };
 
 export function IdeaCardNode({ id, data }: NodeProps) {
-  const { title, description, onSubmitPrompt, onCreateVariations, onAuthRequired } =
+  const { title, description, isLoading, onSubmitPrompt, onCreateVariations, onAuthRequired } =
     data as IdeaCardNodeData;
   const [showOptions, setShowOptions] = useState(false);
   const [showInput, setShowInput] = useState(false);
@@ -120,7 +122,7 @@ export function IdeaCardNode({ id, data }: NodeProps) {
       {/* ── Main card ── */}
       <div
         onClick={handleCardClick}
-        className={`w-[385px] rounded-[15px] border-2 p-6 transition-colors duration-200 ${
+        className={`w-[578px] rounded-[15px] border-2 p-6 transition-colors duration-200 ${
           onSubmitPrompt ? "cursor-pointer" : ""
         } ${
           starred
@@ -149,11 +151,28 @@ export function IdeaCardNode({ id, data }: NodeProps) {
           {title && (
             <h3 className="text-lg font-normal text-white">{title}</h3>
           )}
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {description}
+          <p className="text-[18px] text-muted-foreground leading-relaxed whitespace-pre-line">
+            {(() => {
+              // Keep reasoning; do not display Signal — start from Problem
+              let text = description.replace(/\n{2,}/g, "\n");
+              const problemMatch = text.match(/\nProblem:\s*/i);
+              if (problemMatch) {
+                text = text.slice(problemMatch.index! + 1).trimStart();
+              } else if (/^Problem:\s*/i.test(text)) {
+                text = text.trimStart();
+              }
+              return text;
+            })()}
           </p>
         </div>
       </div>
+
+      {/* ── Loading spinner below card ── */}
+      {isLoading && (
+        <div className="absolute left-1/2 -translate-x-1/2 mt-3" style={{ top: "100%" }}>
+          <LoadingSpinner />
+        </div>
+      )}
 
       {/* ── Option buttons (right-aligned, cascading below card) ── */}
       {showOptions && onSubmitPrompt && (
@@ -221,9 +240,9 @@ export function IdeaCardNode({ id, data }: NodeProps) {
             }}
             placeholder="Enter Prompt"
             autoFocus
-            className="h-[46px] min-w-[385px] max-w-[530px] rounded-[15px] border-2 border-[#2E2E2E] bg-[#171717] px-5 text-base text-white placeholder:text-[#2E2E2E] outline-none focus:border-muted-foreground transition-colors"
+            className="h-[46px] min-w-[578px] max-w-[720px] rounded-[15px] border-2 border-[#2E2E2E] bg-[#171717] px-5 text-base text-white placeholder:text-[#2E2E2E] outline-none focus:border-muted-foreground transition-colors"
             style={{
-              width: Math.max(385, Math.min(530, prompt.length * 9.5 + 40)),
+              width: Math.max(578, Math.min(720, prompt.length * 9.5 + 40)),
             }}
           />
           <button

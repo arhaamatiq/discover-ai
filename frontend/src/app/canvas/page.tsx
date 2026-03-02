@@ -8,6 +8,7 @@ import {
   Controls,
   BackgroundVariant,
   type NodeTypes,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -56,6 +57,9 @@ export default function CanvasPage() {
   );
 
   const startedRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const viewportSetRef = useRef(false);
 
   useEffect(() => {
     // Redirect to intake if no research data
@@ -73,9 +77,36 @@ export default function CanvasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Position the company card in the upper-center of the viewport on first load
+  useEffect(() => {
+    if (!rfInstanceRef.current || viewportSetRef.current || nodes.length === 0) return;
+    const company = nodes.find((n) => n.type === "company-header");
+    if (!company) return;
+    viewportSetRef.current = true;
+
+    const wrapper = document.querySelector(".react-flow");
+    if (!wrapper) return;
+    const { clientWidth, clientHeight } = wrapper;
+    const zoom = 0.85;
+    const cardWidth = 582;
+    const x = clientWidth / 2 - (company.position.x + cardWidth / 2) * zoom;
+    const y = clientHeight * 0.1 - company.position.y * zoom;
+    rfInstanceRef.current.setViewport({ x, y, zoom });
+  }, [nodes]);
+
+  // Save to Supabase once the user state resolves after in-canvas login
+  useEffect(() => {
+    if (user && pendingSaveRef.current) {
+      pendingSaveRef.current = false;
+      saveToSupabase(user.id);
+    }
+  }, [user, saveToSupabase]);
+
   function handleAuthSuccess() {
     setAuthMode(null);
-    if (user) saveToSupabase(user.id);
+    // user state hasn't updated yet at this point — flag it and let the
+    // effect above do the save once the auth state propagates
+    pendingSaveRef.current = true;
   }
 
   return (
@@ -86,8 +117,8 @@ export default function CanvasPage() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.3 }}
+        minZoom={0.3}
+        onInit={(instance) => { rfInstanceRef.current = instance; }}
         proOptions={{ hideAttribution: true }}
         className="bg-background"
       >

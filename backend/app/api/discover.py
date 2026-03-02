@@ -37,7 +37,8 @@ async def run_discovery(
             final_summary = summary or (research.split(".")[0] if "." in research else research[:100])
         else:
             yield sse_event("status", {"message": "Researching company..."})
-            final_research = await research_company(llm, company, context)
+            result = await research_company(llm, company, context)
+            final_research = result.research
             final_summary = final_research.split(".")[0] if "." in final_research else final_research[:100]
 
         # Clean up markdown
