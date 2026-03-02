@@ -59,7 +59,8 @@ async def run_discovery(
         yield sse_event("status", {"message": "Generating ideas..."})
         opportunities = await identify_opportunities(llm, final_research, context)
 
-        # Emit idea cards
+        # Emit idea cards (node + edge in a single yield so the frontend
+        # receives them in the same chunk and can position them immediately)
         for opp in opportunities:
             idea_id = str(uuid.uuid4())
             yield sse_event("node", {
@@ -67,8 +68,7 @@ async def run_discovery(
                 "type": "idea-card",
                 "label": opp.get("title", "Untitled"),
                 "content": opp.get("description", ""),
-            })
-            yield sse_event("edge", {
+            }) + sse_event("edge", {
                 "id": str(uuid.uuid4()),
                 "source": company_node_id,
                 "target": idea_id,

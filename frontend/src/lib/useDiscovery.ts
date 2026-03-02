@@ -36,24 +36,42 @@ const FIRST_ROW_GAP = 150;
 const MIN_GAP = 40; // minimum gap between adjacent columns
 const VERTICAL_GAP = 80;
 
+/** Approximate the rendered text of an idea-card description.
+ *  The component strips the "Signal" section (everything before "Problem:"). */
+function renderedDescription(desc: string): string {
+  let text = desc.replace(/\n{2,}/g, "\n");
+  const problemMatch = text.match(/\nProblem:\s*/i);
+  if (problemMatch) {
+    text = text.slice(problemMatch.index! + 1).trimStart();
+  } else if (/^Problem:\s*/i.test(text)) {
+    text = text.trimStart();
+  }
+  return text;
+}
+
 function estimateNodeHeight(node: Node): number {
   if (node.type === "company-header") return COMPANY_HEIGHT;
 
   if (node.type === "prompt-bubble") {
     const text: string = (node.data as Record<string, unknown>).prompt as string ?? "";
-    const charsPerLine = 55; // ~55 chars per line at 582px with padding
+    const charsPerLine = 55;
     const lines = Math.max(1, Math.ceil(text.length / charsPerLine));
-    return lines * 22 + 36; // line-height + padding
+    return lines * 30 + 36; // 18px * 1.625 leading-relaxed ≈ 30px/line
   }
 
   if (node.type === "idea-card") {
     const title: string = (node.data as Record<string, unknown>).title as string ?? "";
-    const desc: string = (node.data as Record<string, unknown>).description as string ?? "";
+    const rawDesc: string = (node.data as Record<string, unknown>).description as string ?? "";
+    const desc = renderedDescription(rawDesc);
+
+    // 18px text with leading-relaxed (1.625) ≈ 30px per line
+    const LINE_HEIGHT = 30;
     const titleLines = title ? Math.max(1, Math.ceil(title.length / 30)) : 0;
     const descLinesByBreaks = (desc.match(/\n/g) || []).length + 1;
-    const descLinesByLength = Math.ceil(desc.length / 72); /* ~72 chars per line at 578px width */
+    const descLinesByLength = Math.ceil(desc.length / 60);
     const descLines = Math.max(1, descLinesByBreaks, descLinesByLength);
-    return (titleLines + descLines) * 22 + 48 + (title ? 12 : 0); // 22px per line for 15px text + spacing
+    // p-6 = 48px vertical padding, space-y-3 = 12px gap when title exists
+    return (titleLines + descLines) * LINE_HEIGHT + 48 + (title ? 12 : 0);
   }
 
   return 100;
@@ -194,10 +212,12 @@ function layoutNodes(nodes: Node[], edges: Edge[]): Node[] {
     }
   }
 
-  return nodes.map((n) => ({
-    ...n,
-    position: positioned.get(n.id) ?? n.position,
-  }));
+  return nodes
+    .filter((n) => positioned.has(n.id))
+    .map((n) => ({
+      ...n,
+      position: positioned.get(n.id)!,
+    }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -258,10 +278,12 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
   const companyNodeIdRef = useRef<string>("");
   const loadingNodeIdRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutPendingRef = useRef(false);
 
   /* ---- helper: re-layout, inject isLoading, and flush to state ---- */
   function applyLayout() {
     const laidOut = layoutNodes(rawNodesRef.current, rawEdgesRef.current);
+    const positionedIds = new Set(laidOut.map((n) => n.id));
     const withLoading = laidOut.map((n) => ({
       ...n,
       data: {
@@ -270,7 +292,23 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
       },
     }));
     setNodes(withLoading);
-    setEdges([...rawEdgesRef.current]);
+    setEdges(
+      rawEdgesRef.current.filter(
+        (e) => positionedIds.has(e.source) && positionedIds.has(e.target)
+      )
+    );
+  }
+
+  /** Batch layout via microtask so multiple SSE events in the same
+   *  chunk only trigger a single layout pass. */
+  function scheduleLayout() {
+    if (!layoutPendingRef.current) {
+      layoutPendingRef.current = true;
+      queueMicrotask(() => {
+        layoutPendingRef.current = false;
+        applyLayout();
+      });
+    }
   }
 
   /* ---- Re-hydrate idea cards when auth state changes (e.g. user logs in) ---- *
@@ -373,7 +411,6 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
         const nodeType = data.type as string;
         const nodeId = data.id as string;
 
-        // Track company node ID for parentId on idea cards; mark it as loading
         if (nodeType === "company-header") {
           companyNodeIdRef.current = nodeId;
           loadingNodeIdRef.current = nodeId;
@@ -399,7 +436,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
           },
         };
         rawNodesRef.current = [...rawNodesRef.current, newNode];
-        applyLayout();
+        scheduleLayout();
         break;
       }
       case "edge": {
@@ -410,8 +447,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
           style: { stroke: "#404040", strokeWidth: 2 },
         };
         rawEdgesRef.current = [...rawEdgesRef.current, newEdge];
-        // Re-run layout so nodes that arrived before their edge get positioned
-        applyLayout();
+        scheduleLayout();
         break;
       }
       case "status": {
@@ -425,7 +461,7 @@ export function useDiscovery(options: DiscoveryOptions = {}) {
       case "done": {
         setStatus("Discovery complete");
         loadingNodeIdRef.current = "";
-        applyLayout();
+        scheduleLayout();
         break;
       }
     }
